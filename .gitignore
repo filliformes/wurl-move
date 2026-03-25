@@ -3,3 +3,4 @@ dist/
 *.o
 *.tar.gz
 release.json
+reference/

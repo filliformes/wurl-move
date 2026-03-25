@@ -24,6 +24,11 @@ MSYS_NO_PATHCONV=1 docker run --rm \
 
 cp "$ROOT/src/module.json" "$ROOT/dist/$MODULE_ID/"
 
+if [ -d "$ROOT/chain_patches" ]; then
+    mkdir -p "$ROOT/dist/$MODULE_ID/chain_patches"
+    cp "$ROOT/chain_patches/"* "$ROOT/dist/$MODULE_ID/chain_patches/" 2>/dev/null || true
+fi
+
 tar -czf "$ROOT/dist/$MODULE_ID-module.tar.gz" -C "$ROOT/dist" "$MODULE_ID/"
 
 echo "=== Build complete ==="

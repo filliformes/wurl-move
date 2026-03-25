@@ -19,8 +19,8 @@
       "levels": {
         "root": {
           "name": "Wurl",
-          "knobs": ["volume","tremolo","speaker","attack","decay","brightness","bark","tune"],
-          "params": ["volume","tremolo","speaker","attack","decay","brightness","bark","tune"]
+          "knobs": ["volume","tremolo","attack","decay","brightness","darken","bark","reverb"],
+          "params": ["volume","tremolo","attack","decay","brightness","darken","bark","reverb","speaker","tune","preset"]
         }
       }
     }
