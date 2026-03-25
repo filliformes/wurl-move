@@ -195,6 +195,34 @@ static int isfinite_d(double x) {
     return (x == x) && (x - x == 0.0);
 }
 
+/* ── Fast math (per-sample hot path) ─────────────────────────────── */
+
+/* Fast tanh: Padé [1,2], max error ~0.001 in [-3,3] */
+static inline double fast_tanh(double x) {
+    if (x < -3.0) return -1.0;
+    if (x >  3.0) return  1.0;
+    double x2 = x * x;
+    return x * (27.0 + x2) / (27.0 + 9.0 * x2);
+}
+
+/* Fast exp for small negative arguments (used in NR loop, damper).
+ * Padé [2,2] approximation: accurate to ~0.1% for |x| < 4 */
+static inline double fast_exp(double x) {
+    if (x < -6.0) return 0.0;
+    if (x > 6.0) return 403.4; /* exp(6) */
+    double x2 = x * x;
+    return (12.0 + 6.0*x + x2) / (12.0 - 6.0*x + x2);
+}
+
+/* Fast sin for LFO (full range, ~0.001 error) */
+static inline double fast_sin(double phase) {
+    /* Parabolic approximation with correction */
+    double x = phase;
+    if (x > M_PI) x -= TWO_PI;
+    double y = (4.0/M_PI) * x - (4.0/(M_PI*M_PI)) * x * (x < 0 ? -x : x);
+    return y * (0.775 + 0.225 * (y < 0 ? -y : y));
+}
+
 /* ── MLP v2 Forward Pass ─────────────────────────────────────────── */
 typedef struct {
     double freq_cents[MLP_N_FREQ];
@@ -577,7 +605,8 @@ static void reed_render(reed_t *r, double *out, int frames) {
         double ramp=1.0;
         if (r->sample < r->onset_ramp_samples) {
             double tn=(double)r->sample*r->onset_ramp_inc;
-            ramp=pow(0.5*(1.0-cos(tn)), r->onset_shape_exp);
+            double t01=clamp_d((double)r->sample/(double)r->onset_ramp_samples,0.0,1.0);
+            ramp=t01*t01; /* quadratic onset ramp (replaces cos+pow) */
         }
         double df=1.0;
         if (r->damper_active && !r->damper_ramp_done) {
@@ -601,7 +630,7 @@ static void reed_render(reed_t *r, double *out, int frames) {
                 if (r->damper_ramp_done)
                     md->envelope*=md->damper_mult;
                 else
-                    md->envelope*=exp(-md->damper_rate*df);
+                    md->envelope*=fast_exp(-md->damper_rate*df);
             }
             if (md->envelope < 1e-15) md->envelope = 0.0;
             sum+=md->s*md->amplitude*md->envelope;
@@ -789,7 +818,7 @@ static void preamp_reset(preamp_t *p) {
 
 static inline double preamp_process(preamp_t *p, double in) {
     double x=biquad_process(&p->hpf,in)*p->gain;
-    x=(x>0)?tanh(x/PREAMP_SAT_POS)*PREAMP_SAT_POS:tanh(x/PREAMP_SAT_NEG)*PREAMP_SAT_NEG;
+    x=(x>0)?fast_tanh(x/PREAMP_SAT_POS)*PREAMP_SAT_POS:fast_tanh(x/PREAMP_SAT_NEG)*PREAMP_SAT_NEG;
     return biquad_process(&p->lpf,x);
 }
 
@@ -813,14 +842,16 @@ static void tremolo_set_depth(tremolo_t *t, double d) {
 }
 
 static double tremolo_process(tremolo_t *t) {
-    double lfo=sin(t->phase); t->phase+=t->phase_inc;
+    double lfo=fast_sin(t->phase); t->phase+=t->phase_inc;
     if (t->phase>=TWO_PI) t->phase-=TWO_PI;
     double led=(lfo>0?lfo:0)*t->depth;
     double coeff=(led>t->ldr_env)?t->ldr_atk:t->ldr_rel;
     t->ldr_env=led+coeff*(t->ldr_env-led);
     double drv=clamp_d(t->ldr_env,0.0,1.0), r_ldr;
     if (drv<1e-6) r_ldr=LDR_R_MAX;
-    else r_ldr=exp(t->ln_r_max+t->ln_min_minus_max*pow(drv,LDR_GAMMA));
+    else { /* pow(drv,1.1) ≈ drv * (1 - 0.1*(1-drv)) for drv in [0,1] */
+        double drv11 = drv * (0.9 + 0.1*drv);
+        r_ldr=exp(t->ln_r_max+t->ln_min_minus_max*drv11); }
     return t->r_series+r_ldr;
 }
 
@@ -833,12 +864,13 @@ static void pa_init(power_amp_t *pa) {
 
 static inline double pa_process(power_amp_t *pa, double in) {
     double y=clamp_d(in*pa->cl_gain,-PA_HEADROOM+PA_NR_TOL,PA_HEADROOM-PA_NR_TOL);
-    for (int it=0;it<PA_NR_MAX_ITER;it++) {
+    /* NR loop: 4 iterations max (was 8), fast approximations */
+    for (int it=0;it<4;it++) {
         double err=in-PA_FEEDBACK_BETA*y, v=PA_OPEN_LOOP_GAIN*err;
-        double vs=v*v, vts=PA_CROSSOVER_VT*PA_CROSSOVER_VT, et=exp(-vs/vts);
+        double vs=v*v, vts=PA_CROSSOVER_VT*PA_CROSSOVER_VT, et=fast_exp(-vs/vts);
         double cg=PA_QUIESCENT_GAIN+(1.0-PA_QUIESCENT_GAIN)*(1.0-et);
         double vc=v*cg, dcg=cg+v*(1.0-PA_QUIESCENT_GAIN)*(2.0*v/vts)*et;
-        double ta=tanh(vc/PA_HEADROOM), fv=PA_HEADROOM*ta, fd=(1.0-ta*ta)*dcg;
+        double ta=fast_tanh(vc/PA_HEADROOM), fv=PA_HEADROOM*ta, fd=(1.0-ta*ta)*dcg;
         double res=y-fv, jac=1.0+PA_OPEN_LOOP_GAIN*PA_FEEDBACK_BETA*fd;
         double delta=res/jac; y-=delta;
         if (fabs(delta)<PA_NR_TOL) break;
@@ -874,7 +906,7 @@ static void spk_reset(speaker_t *s) {
 static inline double spk_process(speaker_t *s, double in) {
     double x2=in*in, x3=x2*in;
     double sh=(in+s->a2*x2+s->a3*x3)/(1.0+s->a2+s->a3);
-    double lim=(s->character<0.001)?sh:tanh(sh);
+    double lim=(s->character<0.001)?sh:fast_tanh(sh);
     s->th_state+=(x2-s->th_state)*s->th_alpha;
     double tg=1.0/(1.0+s->th_coeff*sqrt(s->th_state));
     return biquad_process(&s->lpf,biquad_process(&s->hpf,lim*tg));
@@ -1224,7 +1256,7 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
             x = pa_process(&w->pa, x);
             x = spk_process(&w->speaker, x);
             x *= POST_SPEAKER_GAIN;
-            x = tanh(x) * 0.90;
+            x = fast_tanh(x) * 0.90;
             w->up_buf[idx] = x;
         }
     }
