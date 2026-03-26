@@ -101,7 +101,14 @@ The core physical model is faithfully ported from [OpenWurli](https://github.com
 - **Twin-T tremolo oscillator** — the melange-generated 7-node circuit model is 2100 lines. Replaced with sine LFO (the original's `legacy-tremolo` feature flag).
 - **Melange power amp circuit** — the 20-node 7-BJT generated circuit option. The behavioral NR model IS ported.
 
-## Building
+## Install
+
+1. Download `wurl-module.tar.gz` from the [latest release](https://github.com/fillioning/wurl-move/releases/latest)
+2. Open the **Schwung Installer** desktop app
+3. Click **Install custom module** and select the downloaded `.tar.gz`
+4. Restart your Move — Wurl appears under **Sound Generators**
+
+## Building from source
 
 ```bash
 ./scripts/build.sh      # Docker ARM64 cross-compile
