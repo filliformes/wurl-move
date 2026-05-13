@@ -23,6 +23,7 @@ MSYS_NO_PATHCONV=1 docker run --rm \
       -lm -Wall -Wno-unused-variable'
 
 cp "$ROOT/src/module.json" "$ROOT/dist/$MODULE_ID/"
+[ -f "$ROOT/src/help.json" ] && cp "$ROOT/src/help.json" "$ROOT/dist/$MODULE_ID/"
 
 if [ -d "$ROOT/chain_patches" ]; then
     mkdir -p "$ROOT/dist/$MODULE_ID/chain_patches"

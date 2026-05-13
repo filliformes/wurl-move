@@ -1,7 +1,7 @@
 {
   "id": "wurl",
   "name": "Wurl",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "api_version": 2,
   "description": "Physically-modeled Wurlitzer 200A electric piano",
   "author": "fillioning (port of OpenWurli by hal0zer0)",
